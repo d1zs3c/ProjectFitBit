@@ -111,7 +111,6 @@ fitbit
 
 ## Security notes
 
-- `client_secret.json`, `tokens.json`, `*.db` and `*.log` are listed in `.gitignore`. Never commit them: the refresh token grants long-lived read access to your health data.
 - If a secret ever leaks, reset the client secret in Google Cloud Console and revoke the app at https://myaccount.google.com/permissions, then re-run `auth.py`.
 - All scopes requested are read-only.
 
