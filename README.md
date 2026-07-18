@@ -104,6 +104,10 @@ Optional convenience alias:
 ```bash
 echo "alias fitbit='cd /path/to/ProjectFitBit && ./venv/bin/streamlit run app.py'" >> ~/.bashrc
 ```
+Now you can launch the dashborad with only one command:
+```bash
+$] fitbit
+```
 
 ## Security notes
 
