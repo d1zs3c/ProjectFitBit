@@ -106,7 +106,7 @@ echo "alias fitbit='cd /path/to/ProjectFitBit && ./venv/bin/streamlit run app.py
 ```
 Now you can launch the dashborad with only one command:
 ```bash
-$] fitbit
+fitbit
 ```
 
 ## Security notes
