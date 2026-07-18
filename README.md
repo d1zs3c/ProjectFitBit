@@ -115,6 +115,18 @@ fitbit
 - If a secret ever leaks, reset the client secret in Google Cloud Console and revoke the app at https://myaccount.google.com/permissions, then re-run `auth.py`.
 - All scopes requested are read-only.
 
+## Screenshots
+
+### Sleep
+Night selector, per-stage metrics and the interactive hypnogram.
+
+![Sleep tab](docs/sleep.png)
+
+### Heart rate
+Intraday chart with range slider and resting heart rate trend.
+
+![Heart rate tab](docs/heart_rate1.png)
+
 ## Roadmap
 
 - Multi-user support via the same OAuth flow (requires Google's restricted-scope verification).
