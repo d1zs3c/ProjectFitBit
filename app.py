@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 DB = "projectfitbit.db"
-TZ = ZoneInfo("UTC")  # Change this with your IANA timezone, e.g. "Europe/Asia"
+TZ = ZoneInfo("Europe/Berlin")
 
 ACCENT = "#2f6fed"
 GRID = "rgba(128,134,150,0.25)"
@@ -75,8 +75,8 @@ def body_of(p):
     )
 
 
-tab_sleep, tab_hr, tab_act, tab_ex = st.tabs(
-    ["Sleep", "Heart rate", "Activity", "Exercise"]
+tab_sleep, tab_hr, tab_act, tab_ex, tab_ins = st.tabs(
+    ["Sleep", "Heart rate", "Activity", "Exercise", "Analysis"]
 )
 
 with tab_sleep:
@@ -250,7 +250,13 @@ with tab_act:
     else:
         recs = []
         for _, row in steps_rows.iterrows():
-            body = body_of(json.loads(row["payload"]))
+            p = json.loads(row["payload"])
+            src = p.get("dataSource", {})
+            if src.get("platform") != "FITBIT":
+                continue
+            if src.get("device", {}).get("displayName") == "MobileTrack":
+                continue
+            body = body_of(p)
             count = next((int(v) for k, v in body.items()
                           if k != "interval" and str(v).isdigit()), 0)
             recs.append({"ts": row["ts"], "steps": count})
@@ -318,6 +324,154 @@ with tab_ex:
 
         with st.expander("Latest session detail"):
             st.json(recs[0]["_raw"])
+
+with tab_ins:
+
+    def daily_frame():
+        rows = []
+        srows = q("SELECT ts, payload FROM raw_points "
+                  "WHERE data_type='sleep' ORDER BY ts")
+        for _, r in srows.iterrows():
+            p = json.loads(r["payload"])["sleep"]
+            summ = p.get("summary", {})
+            m = {d["type"]: int(d["minutes"])
+                 for d in summ.get("stagesSummary", [])}
+            asleep = int(summ.get("minutesAsleep", 0))
+            rows.append({
+                "day": to_local(pd.Series([r["ts"]]))[0].date(),
+                "sleep_hours": asleep / 60,
+                "deep_min": m.get("DEEP", 0),
+                "rem_min": m.get("REM", 0),
+                "restorative_pct": (
+                    100 * (m.get("DEEP", 0) + m.get("REM", 0)) / asleep
+                    if asleep else None),
+            })
+        sleep_df = pd.DataFrame(rows)
+
+        st_rows = q("SELECT ts, payload FROM raw_points "
+                    "WHERE data_type='steps' ORDER BY ts")
+        recs = []
+        for _, r in st_rows.iterrows():
+            p = json.loads(r["payload"])
+            src = p.get("dataSource", {})
+            if src.get("platform") != "FITBIT":
+                continue
+            if src.get("device", {}).get("displayName") == "MobileTrack":
+                continue
+            body = body_of(p)
+            count = next((int(v) for k, v in body.items()
+                          if k != "interval" and str(v).isdigit()), 0)
+            recs.append({"ts": r["ts"], "steps": count})
+        steps_df = pd.DataFrame(recs)
+        if not steps_df.empty:
+            steps_df["day"] = to_local(steps_df["ts"]).dt.date
+            steps_df = steps_df.groupby("day")["steps"].sum().reset_index()
+
+        rrows = q("SELECT ts, payload FROM raw_points "
+                  "WHERE data_type='daily-resting-heart-rate' ORDER BY ts")
+        rv = []
+        for _, r in rrows.iterrows():
+            body = body_of(json.loads(r["payload"]))
+            num = next((int(v) for v in body.values()
+                        if isinstance(v, (int, str)) and str(v).isdigit()),
+                       None)
+            if num:
+                rv.append({"day": pd.Timestamp(r["ts"]).date(), "rhr": num})
+        rhr_df = pd.DataFrame(rv)
+
+        df = sleep_df
+        if not steps_df.empty:
+            df = df.merge(steps_df, on="day", how="outer")
+        if not rhr_df.empty:
+            df = df.merge(rhr_df, on="day", how="outer")
+        return df.sort_values("day").reset_index(drop=True)
+
+    df = daily_frame()
+
+    st.subheader("Daily score")
+    if df.empty or df["sleep_hours"].dropna().empty:
+        st.info("Not enough sleep data to compute a score yet.")
+    else:
+        last = df.dropna(subset=["sleep_hours"]).iloc[-1]
+        rhr_base = df["rhr"].dropna().mean() if "rhr" in df else None
+
+        p_duration = min(last["sleep_hours"] / 8, 1) * 30
+        p_restorative = min((last["restorative_pct"] or 0) / 40, 1) * 20
+        steps_today = last.get("steps") or 0
+        p_activity = min(steps_today / 10000, 1) * 25
+        if rhr_base and not pd.isna(last.get("rhr")):
+            delta = last["rhr"] - rhr_base
+            p_heart = 25 if delta <= 0 else max(0, 25 - 5 * delta)
+        else:
+            p_heart = 12.5
+        score = round(p_duration + p_restorative + p_activity + p_heart)
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Score", f"{score}/100")
+        c2.metric("Sleep duration", f"{p_duration:.0f}/30")
+        c3.metric("Restorative sleep", f"{p_restorative:.0f}/20")
+        c4.metric("Activity", f"{p_activity:.0f}/25")
+        c5.metric("Heart", f"{p_heart:.0f}/25")
+        st.progress(score / 100)
+        st.caption(
+            "Transparent formula: sleep duration (8h = max, 30 pts) + "
+            "restorative sleep (40% deep+REM = max, 20 pts) + "
+            "steps (10,000 = max, 25 pts) + "
+            "resting heart rate vs your historical average (25 pts, "
+            "minus 5 pts per bpm above it)."
+        )
+
+    st.subheader("Correlations")
+    numeric = df.drop(columns=["day"], errors="ignore").select_dtypes("number")
+    n_days = len(df.dropna(subset=["sleep_hours"])) if not df.empty else 0
+    if n_days < 5:
+        st.info(
+            f"At least 5 days with sleep data are needed for meaningful "
+            f"correlations (currently {n_days}). This section will come "
+            "alive on its own as nights accumulate."
+        )
+    else:
+        NAMES = {
+            "sleep_hours": "Sleep hours",
+            "deep_min": "Deep sleep (min)",
+            "rem_min": "REM (min)",
+            "restorative_pct": "Restorative sleep (%)",
+            "steps": "Steps",
+            "rhr": "Resting heart rate",
+        }
+        cols = [c for c in numeric.columns if c in NAMES]
+        cx, cy = st.columns(2)
+        x = cx.selectbox("X axis", cols, index=cols.index("steps")
+                         if "steps" in cols else 0,
+                         format_func=lambda c: NAMES[c])
+        y = cy.selectbox("Y axis", cols, index=cols.index("sleep_hours")
+                         if "sleep_hours" in cols else 0,
+                         format_func=lambda c: NAMES[c])
+        pair = df[[x, y]].dropna()
+        if len(pair) >= 5 and x != y:
+            r = pair[x].corr(pair[y])
+            st.metric("Correlation (Pearson r)", f"{r:+.2f}")
+            fig = go.Figure(
+                go.Scatter(x=pair[x], y=pair[y], mode="markers",
+                           marker=dict(color=ACCENT, size=9))
+            )
+            fig.update_xaxes(title=NAMES[x])
+            fig.update_yaxes(title=NAMES[y])
+            st.plotly_chart(base_layout(fig), width="stretch")
+            st.caption(
+                "Guide: |r| > 0.5 strong, 0.3-0.5 moderate, < 0.3 weak. "
+                "Correlation is not causation; with few days, treat it as "
+                "a hint, not a verdict."
+            )
+        else:
+            st.info("Not enough days with both variables.")
+
+        with st.expander("Full correlation matrix"):
+            st.dataframe(
+                numeric[cols].corr().round(2).rename(
+                    index=NAMES, columns=NAMES),
+                width="stretch",
+            )
 
 st.caption(
     "Data refreshes automatically every 15 minutes via cron. "
