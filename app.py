@@ -103,7 +103,8 @@ with tab_sleep:
             )
 
         labels = [
-            to_local(pd.Series([s["start"]]))[0].strftime("Night of %Y-%m-%d")
+            (to_local(pd.Series([s["start"]]))[0] - timedelta(hours=12))
+            .strftime("Night of %Y-%m-%d")
             for s in sessions
         ]
         sel = st.selectbox("Night", range(len(sessions)),
@@ -182,7 +183,8 @@ with tab_sleep:
             st.subheader("Trend")
             df = pd.DataFrame(
                 {
-                    "night": [to_local(pd.Series([s["start"]]))[0].date()
+                    "night": [(to_local(pd.Series([s["start"]]))[0]
+                               - timedelta(hours=12)).date()
                               for s in sessions],
                     "hours": [s["min_asleep"] / 60 for s in sessions],
                 }
@@ -338,7 +340,8 @@ with tab_ins:
                  for d in summ.get("stagesSummary", [])}
             asleep = int(summ.get("minutesAsleep", 0))
             rows.append({
-                "day": to_local(pd.Series([r["ts"]]))[0].date(),
+                "day": (to_local(pd.Series([r["ts"]]))[0]
+                        - timedelta(hours=12)).date(),
                 "sleep_hours": asleep / 60,
                 "deep_min": m.get("DEEP", 0),
                 "rem_min": m.get("REM", 0),
