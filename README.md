@@ -102,7 +102,7 @@ Set your time zone in `app.py` (`TZ` constant) before first use.
 Optional convenience alias:
 
 ```bash
-echo "alias fitbit='cd /path/to/ProjectFitBit && ./venv/bin/streamlit run app.py'" >> ~/.bashrc
+alias fitbit='~/projects/ProjectFitBit/run.sh &'
 ```
 Now you can launch the dashborad with only one command:
 ```bash
